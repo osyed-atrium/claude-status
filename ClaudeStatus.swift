@@ -216,7 +216,7 @@ func symbol(_ name: String, _ color: NSColor, size: CGFloat = 13,
 // so no Anthropic artwork is redistributed here. Falls back to a drawn
 // starburst for CLI-only installs where Claude.app is absent.
 
-func drawnStarburst(size: CGFloat = 17) -> NSImage {
+func drawnStarburst(size: CGFloat = 24) -> NSImage {
     // Twelve blunt, round-capped spokes of uneven length around a dense hub.
     // Weight and lengths were tuned by rendering against Claude.app's own tray
     // icon at menu bar size; tapered spokes read as a sparkle, and heavier ones
@@ -250,7 +250,10 @@ let claudeMark: NSImage = {
     let base = "/Applications/Claude.app/Contents/Resources"
     for name in ["TrayIconTemplate@3x.png", "TrayIconTemplate@2x.png", "TrayIconTemplate.png"] {
         if let img = NSImage(contentsOfFile: "\(base)/\(name)") {
-            img.size = NSSize(width: 17, height: 17)
+            // Do not resize. The asset carries 3x DPI metadata, so it already
+            // reports a natural 24pt size, and its glyph fills only 69% of that
+            // canvas. Forcing a smaller size shrinks the visible mark to well
+            // under what Claude.app itself renders.
             img.isTemplate = true
             return img
         }
