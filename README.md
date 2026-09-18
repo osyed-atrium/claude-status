@@ -18,7 +18,7 @@ Requires macOS 13+ and the Xcode Command Line Tools (`xcode-select --install`).
 No full Xcode, no Node, no dependencies.
 
 ```sh
-git clone <this repo> claude-status
+git clone https://github.com/osyed-atrium/claude-status.git
 cd claude-status
 ./install.sh
 ```
