@@ -210,6 +210,13 @@ func symbol(_ name: String, _ color: NSColor, size: CGFloat = 13,
         .withSymbolConfiguration(cfg)
 }
 
+func templateSymbol(_ name: String, size: CGFloat = 13) -> NSImage? {
+    let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+        .withSymbolConfiguration(.init(pointSize: size, weight: .regular))
+    img?.isTemplate = true
+    return img
+}
+
 func statusIcon(_ s: Session, size: CGFloat = 13) -> NSImage? {
     switch s.status {
     case "busy":
@@ -311,9 +318,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let toggle = NSMenuItem(title: panel == nil ? "Show Desktop Panel" : "Hide Desktop Panel",
                                 action: #selector(togglePanel), keyEquivalent: "d")
         toggle.target = self
+        toggle.image = templateSymbol("widget.small")
         menu.addItem(toggle)
-        menu.addItem(NSMenuItem(title: "Quit Claude Status",
-                                action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        let quit = NSMenuItem(title: "Quit Claude Status",
+                              action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.image = templateSymbol("power")
+        menu.addItem(quit)
     }
 
     func showPanel() {
