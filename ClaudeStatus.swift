@@ -247,32 +247,34 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let busy = all.filter { $0.isBusy }
         guard let button = statusItem.button else { return }
 
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         let mark = NSImage(systemSymbolName: "asterisk", accessibilityDescription: "Claude")?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
         mark?.isTemplate = true
         button.image = mark
         button.imagePosition = .imageLeading
         button.imageHugsTitle = true
-
-        let text = NSMutableAttributedString()
-        func put(_ s: String, _ c: NSColor) {
-            text.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: c]))
-        }
+        button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
 
         if let a = attn.first {
+            // Yellow reads against a light or a dark menu bar, so it is safe to force.
             button.contentTintColor = .systemYellow
-            put(attn.count > 1 ? " \(attn.count) waiting" : " " + elapsed(a.statusSince), .systemYellow)
-        } else if let b = busy.min(by: { $0.statusSince < $1.statusSince }) {
-            spin = (spin + 1) % frames.count
-            button.contentTintColor = .labelColor
-            put(" " + frames[spin] + " " + elapsed(b.statusSince), .labelColor)
-            if busy.count > 1 { put(" +\(busy.count - 1)", .secondaryLabelColor) }
+            let text = attn.count > 1 ? " \(attn.count) waiting" : " " + elapsed(a.statusSince)
+            button.attributedTitle = NSAttributedString(string: text, attributes: [
+                .font: button.font!, .foregroundColor: NSColor.systemYellow])
         } else {
-            button.contentTintColor = .tertiaryLabelColor
-            put("", .tertiaryLabelColor)
+            // Leave the tint alone. A template image and a plain title are recolored
+            // by AppKit to match the menu bar, which is dark whenever the wallpaper
+            // behind it is dark -- even in Light mode. Pinning labelColor here is what
+            // painted the icon black on a dark bar and made it disappear.
+            button.contentTintColor = nil
+            if let b = busy.min(by: { $0.statusSince < $1.statusSince }) {
+                spin = (spin + 1) % frames.count
+                button.title = " " + frames[spin] + " " + elapsed(b.statusSince)
+                    + (busy.count > 1 ? " +\(busy.count - 1)" : "")
+            } else {
+                button.title = ""
+            }
         }
-        button.attributedTitle = text
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
