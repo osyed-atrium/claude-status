@@ -359,22 +359,27 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.imageHugsTitle = true
         button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
 
+        // Menu bar width is scarce: on a notched display a wide item overflows
+        // behind the notch and vanishes. Compact is the default, and the timer
+        // text is opt-in for anyone with room for it.
+        let showTimer = UserDefaults.standard.bool(forKey: "showTimerInMenuBar")
+
         if let a = attn.first {
-            // Yellow reads against a light or a dark menu bar, so it is safe to force.
             button.contentTintColor = .systemYellow
-            let text = attn.count > 1 ? " \(attn.count) waiting" : " " + elapsed(a.statusSince)
+            let text = attn.count > 1 ? " \(attn.count)"
+                     : (showTimer ? " " + elapsed(a.statusSince) : "")
             button.attributedTitle = NSAttributedString(string: text, attributes: [
                 .font: button.font!, .foregroundColor: NSColor.systemYellow])
         } else {
-            // Leave the tint alone. A template image and a plain title are recolored
-            // by AppKit to match the menu bar, which is dark whenever the wallpaper
-            // behind it is dark -- even in Light mode. Pinning labelColor here is what
-            // painted the icon black on a dark bar and made it disappear.
             button.contentTintColor = nil
             if let b = busy.min(by: { $0.statusSince < $1.statusSince }) {
                 spin = (spin + 1) % frames.count
-                button.title = " " + frames[spin] + " " + elapsed(b.statusSince)
-                    + (busy.count > 1 ? " +\(busy.count - 1)" : "")
+                var text = " " + frames[spin]
+                if showTimer {
+                    text += " " + elapsed(b.statusSince)
+                    if busy.count > 1 { text += " +\(busy.count - 1)" }
+                }
+                button.title = text
             } else {
                 button.title = ""
             }
@@ -418,6 +423,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggle.image = templateSymbol("widget.small")
         menu.addItem(toggle)
 
+        let timer = NSMenuItem(title: "Show Timer in Menu Bar",
+                               action: #selector(toggleTimer), keyEquivalent: "t")
+        timer.target = self
+        timer.image = templateSymbol("timer")
+        timer.state = UserDefaults.standard.bool(forKey: "showTimerInMenuBar") ? .on : .off
+        menu.addItem(timer)
+
         let quit = NSMenuItem(title: "Quit Claude Status",
                               action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.image = templateSymbol("power")
@@ -429,6 +441,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         p.update(readSessions())
         p.window.orderFront(nil)
         panel = p
+    }
+
+    @objc func toggleTimer() {
+        let d = UserDefaults.standard
+        d.set(!d.bool(forKey: "showTimerInMenuBar"), forKey: "showTimerInMenuBar")
+        tick()
     }
 
     @objc func togglePanel() {
@@ -546,11 +564,47 @@ final class DesktopPanel: NSObject, NSWindowDelegate {
         window.contentView = view
         window.delegate = self
 
+        restorePosition()
+        // A display that goes away takes its coordinate space with it, so
+        // re-check whenever the screen layout changes.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(screensChanged),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    }
+
+    /// True only if a usable chunk of the panel would actually be on a screen.
+    private func isReachable(_ origin: NSPoint) -> Bool {
+        let rect = NSRect(origin: origin, size: window.frame.size)
+        return NSScreen.screens.contains { screen in
+            let hit = screen.visibleFrame.intersection(rect)
+            return hit.width >= 80 && hit.height >= 40
+        }
+    }
+
+    private func defaultOrigin() -> NSPoint {
+        guard let screen = NSScreen.main else { return NSPoint(x: 40, y: 40) }
+        return NSPoint(x: screen.visibleFrame.maxX - PanelView.width - 24,
+                       y: screen.visibleFrame.maxY - 240)
+    }
+
+    private func restorePosition() {
         if let f = UserDefaults.standard.string(forKey: "panelOrigin") {
-            window.setFrameOrigin(NSPointFromString(f))
-        } else if let screen = NSScreen.main {
-            window.setFrameOrigin(NSPoint(x: screen.visibleFrame.maxX - PanelView.width - 24,
-                                          y: screen.visibleFrame.maxY - 240))
+            let saved = NSPointFromString(f)
+            if isReachable(saved) {
+                window.setFrameOrigin(saved)
+                return
+            }
+            // Saved against a display that is no longer attached. Drop it rather
+            // than opening the panel somewhere the user cannot see or reach it.
+            UserDefaults.standard.removeObject(forKey: "panelOrigin")
+        }
+        window.setFrameOrigin(defaultOrigin())
+    }
+
+    @objc private func screensChanged() {
+        if !isReachable(window.frame.origin) {
+            window.setFrameOrigin(defaultOrigin())
+            UserDefaults.standard.set(NSStringFromPoint(window.frame.origin), forKey: "panelOrigin")
         }
     }
 
@@ -587,6 +641,55 @@ if let i = CommandLine.arguments.firstIndex(of: "--render-panel"),
         .write(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
     print("wrote \(CommandLine.arguments[i + 1])")
     exit(0)
+}
+
+if let i = CommandLine.arguments.firstIndex(of: "--render-mark"),
+   i + 1 < CommandLine.arguments.count {
+    let m = claudeMark
+    print("mark size \(m.size), isTemplate \(m.isTemplate), reps \(m.representations.count)")
+    guard let tiff = m.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else {
+        print("NO BITMAP"); exit(1)
+    }
+    var opaque = 0
+    for y in 0..<rep.pixelsHigh {
+        for x in 0..<rep.pixelsWide where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.1 {
+            opaque += 1
+        }
+    }
+    print("pixels \(rep.pixelsWide)x\(rep.pixelsHigh), non-transparent: \(opaque)")
+    try! rep.representation(using: .png, properties: [:])!
+        .write(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+    exit(0)
+}
+
+// `--probe` creates the real status item, then reports whether macOS actually
+// gave it a slot in the menu bar. A hidden item still reports isVisible = true,
+// so the window frame is what tells the truth.
+if CommandLine.arguments.contains("--probe") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    item.button?.image = claudeMark
+    item.button?.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+    item.button?.title = CommandLine.arguments.contains("--wide") ? " \u{283C} 6:08 +3" : " \u{283C}"
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        print("isVisible: \(item.isVisible)")
+        print("length: \(item.length)")
+        if let w = item.button?.window {
+            print("status window frame: \(w.frame)")
+            let screens = NSScreen.screens.map { $0.frame }
+            print("screens: \(screens)")
+            print("on a screen: \(screens.contains { $0.intersects(w.frame) })")
+        } else {
+            print("NO WINDOW -- macOS gave the item no slot")
+        }
+        if let s = NSScreen.main {
+            print("menu bar height: \(s.frame.height - s.visibleFrame.height - (s.visibleFrame.origin.y))")
+            print("safeAreaInsets.top (notch): \(s.safeAreaInsets.top)")
+        }
+        exit(0)
+    }
+    app.run()
 }
 
 if CommandLine.arguments.contains("--dump") {
