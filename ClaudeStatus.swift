@@ -260,38 +260,50 @@ func trayMark() -> NSImage? {
     return nil
 }
 
-// Half the Claude mark beside a clock, so this is not mistaken for the Claude
-// desktop app's own tray icon sitting a few pixels away. The clock is drawn
-// rather than taken from SF Symbols: clipping a clock in half removes its
-// hands, and the SF one's hands thin out to nothing at menu bar size.
+// One glyph with one centre: the Claude mark cut down the middle, its right half
+// replaced by a clock face. Sharing a centre is what makes the two halves read as
+// a single object rather than two icons side by side.
+//
+// The clock is drawn, not an SF Symbol, for two reasons. A clock's hands live at
+// its centre, so cutting a stock clock in half removes them; drawing it lets the
+// hands be angled into the visible half. And SF clock hands are hairlines that
+// disappear entirely at menu bar size.
 let claudeMark: NSImage = {
     let mark = trayMark() ?? drawnStarburst(size: 24)
-    let w: CGFloat = 26, h: CGFloat = 24
-    let markCenter: CGFloat = 8, seam: CGFloat = 11
-    let clockCenter = NSPoint(x: 18.5, y: h / 2), clockD: CGFloat = 14
+    let size: CGFloat = 24
+    let ringR: CGFloat = 7.9, lw: CGFloat = 1.5
+    let hourDeg: CGFloat = 55, minuteDeg: CGFloat = 0
 
-    let img = NSImage(size: NSSize(width: w, height: h))
+    let img = NSImage(size: NSSize(width: size, height: size))
     img.lockFocus()
+    let c = NSPoint(x: size / 2, y: size / 2)
 
+    // Left half of the mark.
     NSGraphicsContext.saveGraphicsState()
-    NSBezierPath(rect: NSRect(x: 0, y: 0, width: seam, height: h)).setClip()
-    mark.draw(in: NSRect(x: markCenter - h / 2, y: 0, width: h, height: h))
+    NSBezierPath(rect: NSRect(x: 0, y: 0, width: size / 2, height: size)).setClip()
+    mark.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
     NSGraphicsContext.restoreGraphicsState()
 
     NSColor.black.setStroke()
-    let r = clockD / 2
-    let ring = NSBezierPath(ovalIn: NSRect(x: clockCenter.x - r, y: clockCenter.y - r,
-                                           width: clockD, height: clockD))
-    ring.lineWidth = clockD * 0.13
-    ring.stroke()
+    NSColor.black.setFill()
+
+    // Right half of the clock face: the arc from 6 o'clock round to 12.
+    let arc = NSBezierPath()
+    arc.lineWidth = lw
+    arc.appendArc(withCenter: c, radius: ringR, startAngle: -90, endAngle: 90, clockwise: false)
+    arc.stroke()
+
     let hands = NSBezierPath()
-    hands.lineWidth = clockD * 0.13
+    hands.lineWidth = lw
     hands.lineCapStyle = .round
-    hands.move(to: clockCenter)
-    hands.line(to: NSPoint(x: clockCenter.x, y: clockCenter.y + r * 0.52))
-    hands.move(to: clockCenter)
-    hands.line(to: NSPoint(x: clockCenter.x + r * 0.40, y: clockCenter.y))
+    for (deg, frac) in [(hourDeg, CGFloat(0.52)), (minuteDeg, CGFloat(0.78))] {
+        let r = deg * .pi / 180
+        hands.move(to: c)
+        hands.line(to: NSPoint(x: c.x + cos(r) * ringR * frac, y: c.y + sin(r) * ringR * frac))
+    }
     hands.stroke()
+    NSBezierPath(ovalIn: NSRect(x: c.x - lw * 0.7, y: c.y - lw * 0.7,
+                                width: lw * 1.4, height: lw * 1.4)).fill()
 
     img.unlockFocus()
     img.isTemplate = true
