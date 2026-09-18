@@ -64,6 +64,7 @@ func jsonString(_ hay: String, key: String) -> String? {
 final class DesktopTitles {
     static let shared = DesktopTitles()
     private var byCliId: [String: String] = [:]
+    private var localByCliId: [String: String] = [:]
     private var mtimes: [String: Date] = [:]
     private var lastScan = Date.distantPast
     private let lock = NSLock()
@@ -72,6 +73,13 @@ final class DesktopTitles {
         rescanIfStale()
         lock.lock(); defer { lock.unlock() }
         return byCliId[id]
+    }
+
+    // The desktop app's own id for the chat, which is what its deep link wants.
+    func localId(forCliId id: String) -> String? {
+        rescanIfStale()
+        lock.lock(); defer { lock.unlock() }
+        return localByCliId[id]
     }
 
     private func rescanIfStale() {
@@ -103,13 +111,33 @@ final class DesktopTitles {
 
             lock.lock()
             mtimes[key] = mtime
-            if let cli = jsonString(head, key: "cliSessionId"),
-               let t = jsonString(head, key: "title"), !t.isEmpty {
-                byCliId[cli] = t
+            if let cli = jsonString(head, key: "cliSessionId") {
+                if let t = jsonString(head, key: "title"), !t.isEmpty { byCliId[cli] = t }
+                // "sessionId" is the first key in the file and matches its stem.
+                // Searching for the leading quote keeps this off "cliSessionId".
+                if let local = jsonString(head, key: "sessionId"), local.hasPrefix("local_") {
+                    localByCliId[cli] = local
+                }
             }
             lock.unlock()
         }
     }
+}
+
+// Clicking a row should land you in the chat. The desktop app registers claude://
+// and focuses a session for claude://code/continue?session=<id>, where the id has to
+// match /^local_[A-Za-z0-9-]{1,64}$/ or the handler rejects the URL outright.
+func chatURL(forCliId id: String) -> URL? {
+    guard let local = DesktopTitles.shared.localId(forCliId: id) else { return nil }
+    return URL(string: "claude://code/continue?session=\(local)")
+}
+
+// The chat is the point; cwd is the fallback for sessions the desktop app has never
+// seen, i.e. a plain `claude` started in a terminal, which has no local_ file.
+final class RowTarget: NSObject {
+    let chat: URL?
+    let cwd: String
+    init(chat: URL?, cwd: String) { self.chat = chat; self.cwd = cwd }
 }
 
 // First real user message of a transcript, used as the session label.
@@ -407,8 +435,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             i.attributedTitle = line
             i.image = statusIcon(s)
             i.target = self
-            i.representedObject = s.cwd
-            i.toolTip = "\(s.status) for \(elapsed(s.statusSince))\nsession up \(elapsed(s.startedAt))\npid \(s.pid)\n\(s.cwd)"
+            i.representedObject = RowTarget(chat: chatURL(forCliId: s.id), cwd: s.cwd)
+            i.toolTip = "\(s.status) for \(elapsed(s.statusSince))\nsession up \(elapsed(s.startedAt))"
+                + "\npid \(s.pid)\n\(s.cwd)\n\nclick to open the chat, ⌥click for the folder"
             menu.addItem(i)
         }
         menu.addItem(.separator())
@@ -443,8 +472,15 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func reveal(_ sender: NSMenuItem) {
-        guard let p = sender.representedObject as? String, !p.isEmpty else { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: p))
+        guard let t = sender.representedObject as? RowTarget else { return }
+        // Option-click keeps what this used to do, and is the only route for a
+        // terminal-started session, which has no chat to open.
+        if let chat = t.chat, !NSEvent.modifierFlags.contains(.option) {
+            NSWorkspace.shared.open(chat)
+            return
+        }
+        guard !t.cwd.isEmpty else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: t.cwd))
     }
 }
 
@@ -599,6 +635,8 @@ if CommandLine.arguments.contains("--dump") {
         print("\(s.status.padding(toLength: 11, withPad: " ", startingAt: 0))"
             + "\(elapsed(s.statusSince).padding(toLength: 8, withPad: " ", startingAt: 0))"
             + "pid \(s.pid)  \(label)")
+        print("                    "
+            + (chatURL(forCliId: s.id)?.absoluteString ?? "no chat -- opens \(s.cwd)"))
     }
     exit(0)
 }

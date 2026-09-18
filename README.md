@@ -44,6 +44,23 @@ near the top, so only the first 32KB is read, and only when the file's mtime cha
 If a chat has no title yet (the app names them after a turn or two), it falls back to
 the first user message in the transcript, then to the working directory name.
 
+## Clicking a session
+
+A row opens that chat in the Claude desktop app. It registers the `claude://` scheme
+and focuses a session for:
+
+```
+claude://code/continue?session=local_<uuid>
+```
+
+The id is the desktop app's own session id, not the CLI one — the handler requires
+`/^local_[A-Za-z0-9-]{1,64}$/` and rejects anything else. It is the `sessionId` field
+of the same `local_*.json` the titles come from, so the join is already in hand.
+
+⌥-click opens the working folder in Finder instead. A session started with plain
+`claude` in a terminal has no `local_*.json` and so no chat to open; those rows fall
+back to the folder on an ordinary click.
+
 ## States
 
 | Icon | Status | Meaning |
@@ -76,8 +93,8 @@ from a borderless panel that `swiftc` alone can build.
 "$HOME/Applications/Claude Status.app/Contents/MacOS/ClaudeStatus" --render-panel /tmp/panel.png
 ```
 
-`--dump` prints what the menu would show. `--render-panel` writes the panel to a PNG
-without putting it on screen.
+`--dump` prints what the menu would show, each row followed by the URL that clicking
+it opens. `--render-panel` writes the panel to a PNG without putting it on screen.
 
 ## Sharing / signing
 
