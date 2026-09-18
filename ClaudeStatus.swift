@@ -245,8 +245,7 @@ func drawnStarburst(size: CGFloat = 24) -> NSImage {
     return img
 }
 
-// Built once: tick() runs three times a second and must not touch the disk.
-let claudeMark: NSImage = {
+func trayMark() -> NSImage? {
     let base = "/Applications/Claude.app/Contents/Resources"
     for name in ["TrayIconTemplate@3x.png", "TrayIconTemplate@2x.png", "TrayIconTemplate.png"] {
         if let img = NSImage(contentsOfFile: "\(base)/\(name)") {
@@ -258,7 +257,45 @@ let claudeMark: NSImage = {
             return img
         }
     }
-    return drawnStarburst()
+    return nil
+}
+
+// Half the Claude mark beside a clock, so this is not mistaken for the Claude
+// desktop app's own tray icon sitting a few pixels away. The clock is drawn
+// rather than taken from SF Symbols: clipping a clock in half removes its
+// hands, and the SF one's hands thin out to nothing at menu bar size.
+let claudeMark: NSImage = {
+    let mark = trayMark() ?? drawnStarburst(size: 24)
+    let w: CGFloat = 26, h: CGFloat = 24
+    let markCenter: CGFloat = 8, seam: CGFloat = 11
+    let clockCenter = NSPoint(x: 18.5, y: h / 2), clockD: CGFloat = 14
+
+    let img = NSImage(size: NSSize(width: w, height: h))
+    img.lockFocus()
+
+    NSGraphicsContext.saveGraphicsState()
+    NSBezierPath(rect: NSRect(x: 0, y: 0, width: seam, height: h)).setClip()
+    mark.draw(in: NSRect(x: markCenter - h / 2, y: 0, width: h, height: h))
+    NSGraphicsContext.restoreGraphicsState()
+
+    NSColor.black.setStroke()
+    let r = clockD / 2
+    let ring = NSBezierPath(ovalIn: NSRect(x: clockCenter.x - r, y: clockCenter.y - r,
+                                           width: clockD, height: clockD))
+    ring.lineWidth = clockD * 0.13
+    ring.stroke()
+    let hands = NSBezierPath()
+    hands.lineWidth = clockD * 0.13
+    hands.lineCapStyle = .round
+    hands.move(to: clockCenter)
+    hands.line(to: NSPoint(x: clockCenter.x, y: clockCenter.y + r * 0.52))
+    hands.move(to: clockCenter)
+    hands.line(to: NSPoint(x: clockCenter.x + r * 0.40, y: clockCenter.y))
+    hands.stroke()
+
+    img.unlockFocus()
+    img.isTemplate = true
+    return img
 }()
 
 func templateSymbol(_ name: String, size: CGFloat = 13) -> NSImage? {
