@@ -200,6 +200,70 @@ func readSessions() -> [Session] {
     }
 }
 
+// MARK: - Sound alerts
+// Chime when a session finishes a turn, or when it starts waiting on you.
+// Transitions only: each tick is diffed against the previous one, so a session
+// parked in needs_input does not chime ten times a second. The first tick after
+// launch records a baseline and stays silent, otherwise every session already
+// alive at login would fire at once.
+
+enum Alert {
+    case done       // busy -> idle: Claude finished responding
+    case needsYou   // -> needs_input / waiting / blocked
+
+    var soundName: String {
+        switch self {
+        case .done: return "Glass"
+        case .needsYou: return "Ping"
+        }
+    }
+}
+
+final class SoundAlerts {
+    static let shared = SoundAlerts()
+    private var last: [String: String] = [:]
+    private var primed = false
+    private var cache: [String: NSSound] = [:]
+
+    var enabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "soundEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "soundEnabled") }
+    }
+
+    @discardableResult
+    func update(_ sessions: [Session]) -> Alert? {
+        var next: [String: String] = [:]
+        var fire: Alert?
+
+        for s in sessions {
+            next[s.id] = s.status
+            let before = last[s.id]
+            guard before != s.status else { continue }   // no move, no news
+
+            if s.needsYou {
+                fire = .needsYou                         // always wins over .done
+            } else if before == "busy", fire == nil {
+                fire = .done
+            }
+        }
+
+        // Rebuilt rather than merged, so sessions whose pid died drop out and the
+        // map cannot grow without bound.
+        last = next
+        guard primed else { primed = true; return nil }
+        guard enabled, let a = fire else { return nil }
+        play(a)   // at most one per tick: a burst of finishes is one chime, not six
+        return a
+    }
+
+    func play(_ a: Alert) {
+        guard let sound = cache[a.soundName] ?? NSSound(named: a.soundName) else { return }
+        cache[a.soundName] = sound
+        sound.stop()    // retrigger even if the previous play is still running
+        sound.play()
+    }
+}
+
 // SF Symbols, tinted. Rendered as real menu-item images so they sit in the
 // icon column and align the way AppKit menus expect.
 func symbol(_ name: String, _ color: NSColor, size: CGFloat = 13,
@@ -339,6 +403,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        UserDefaults.standard.register(defaults: ["soundEnabled": true])
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.menu = NSMenu()
         statusItem.menu?.delegate = self
@@ -349,6 +414,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func tick() {
         let all = readSessions()
+        SoundAlerts.shared.update(all)
         panel?.update(all)
         let attn = all.filter { $0.needsYou }
         let busy = all.filter { $0.isBusy }
@@ -418,6 +484,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggle.image = templateSymbol("widget.small")
         menu.addItem(toggle)
 
+        let on = SoundAlerts.shared.enabled
+        let sound = NSMenuItem(title: on ? "Mute Sounds" : "Play Sounds",
+                               action: #selector(toggleSound), keyEquivalent: "s")
+        sound.target = self
+        sound.image = templateSymbol(on ? "speaker.slash" : "speaker.wave.2")
+        menu.addItem(sound)
+
         let quit = NSMenuItem(title: "Quit Claude Status",
                               action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.image = templateSymbol("power")
@@ -440,6 +513,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             showPanel()
             UserDefaults.standard.set(true, forKey: "panelVisible")
         }
+    }
+
+    @objc func toggleSound() {
+        SoundAlerts.shared.enabled.toggle()
     }
 
     @objc func reveal(_ sender: NSMenuItem) {
@@ -586,6 +663,45 @@ if let i = CommandLine.arguments.firstIndex(of: "--render-panel"),
     try! rep.representation(using: .png, properties: [:])!
         .write(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
     print("wrote \(CommandLine.arguments[i + 1])")
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--self-test") {
+    func fake(_ id: String, _ status: String) -> Session {
+        Session(id: id, pid: 1, status: status, cwd: "/tmp",
+                startedAt: Date(), statusSince: Date())
+    }
+    var failures = 0
+    func check(_ name: String, _ got: Alert?, _ want: Alert?) {
+        let ok = String(describing: got) == String(describing: want)
+        if !ok { failures += 1 }
+        print("\(ok ? "pass" : "FAIL")  \(name): got \(String(describing: got)), want \(String(describing: want))")
+    }
+
+    let a = SoundAlerts.shared
+    a.enabled = true
+    check("baseline tick is silent",  a.update([fake("x", "busy"), fake("y", "needs_input")]), nil)
+    check("no change, no chime",      a.update([fake("x", "busy"), fake("y", "needs_input")]), nil)
+    check("busy -> idle = done",      a.update([fake("x", "idle"), fake("y", "needs_input")]), Alert.done)
+    check("idle holds, no repeat",    a.update([fake("x", "idle"), fake("y", "needs_input")]), nil)
+    check("idle -> busy is silent",   a.update([fake("x", "busy"), fake("y", "needs_input")]), nil)
+    check("busy -> needs = needsYou", a.update([fake("x", "needs_input"), fake("y", "needs_input")]), Alert.needsYou)
+    check("needsYou beats done",      a.update([fake("x", "busy"), fake("y", "idle"), fake("z", "blocked")]), Alert.needsYou)
+    check("new idle session silent",  a.update([fake("x", "busy"), fake("y", "idle"), fake("w", "idle")]), nil)
+    a.enabled = false
+    check("muted stays silent",       a.update([fake("x", "idle"), fake("y", "idle"), fake("w", "idle")]), nil)
+    a.enabled = true
+
+    print(failures == 0 ? "\nall passed" : "\n\(failures) FAILED")
+    exit(failures == 0 ? 0 : 1)
+}
+
+if CommandLine.arguments.contains("--test-sound") {
+    for a in [Alert.needsYou, Alert.done] {
+        print("\(a) -> \(a.soundName)")
+        SoundAlerts.shared.play(a)
+        Thread.sleep(forTimeInterval: 1.2)   // play() is async; stay alive to hear it
+    }
     exit(0)
 }
 

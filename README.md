@@ -59,6 +59,18 @@ session uptime. Session uptime is in the row tooltip.
 Caveat: `idle` and `busy` are confirmed against a live registry. The other three
 states are read from strings in the Claude Code binary and are handled but unverified.
 
+## Sounds
+
+A chime when a session finishes a turn (`Glass`) and a different one when a session
+starts waiting on you (`Ping`). Menu bar icon -> **Mute Sounds** / **Play Sounds**
+(⌘S) toggles them; the choice persists across restarts. On by default.
+
+These fire on *transitions*, not on state. A session parked in `needs_input` chimes
+once when it gets there, not every refresh. The first refresh after launch only
+records a baseline, so starting the app with six sessions already running is silent.
+When several sessions move in the same refresh you get one sound, not a pile-up, and
+"waiting on you" takes precedence over "finished".
+
 ## Desktop panel
 
 Menu bar icon -> **Show Desktop Panel** (⌘D). It sits at desktop level, so it is
@@ -74,10 +86,16 @@ from a borderless panel that `swiftc` alone can build.
 ```sh
 "$HOME/Applications/Claude Status.app/Contents/MacOS/ClaudeStatus" --dump
 "$HOME/Applications/Claude Status.app/Contents/MacOS/ClaudeStatus" --render-panel /tmp/panel.png
+"$HOME/Applications/Claude Status.app/Contents/MacOS/ClaudeStatus" --test-sound
+"$HOME/Applications/Claude Status.app/Contents/MacOS/ClaudeStatus" --self-test
 ```
 
 `--dump` prints what the menu would show. `--render-panel` writes the panel to a PNG
-without putting it on screen.
+without putting it on screen. `--test-sound` plays both alert sounds. `--self-test`
+asserts the sound transition rules and exits non-zero on failure.
+
+Every flag exits on its own. An unrecognised flag falls through and launches the app,
+so check spelling if a command seems to hang.
 
 ## Sharing / signing
 
