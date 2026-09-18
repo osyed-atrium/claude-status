@@ -210,6 +210,54 @@ func symbol(_ name: String, _ color: NSColor, size: CGFloat = 13,
         .withSymbolConfiguration(cfg)
 }
 
+// MARK: - The Claude mark
+// Loaded at runtime from the installed Claude desktop app, which ships its own
+// menu bar template image. Read from disk rather than vendored into this repo,
+// so no Anthropic artwork is redistributed here. Falls back to a drawn
+// starburst for CLI-only installs where Claude.app is absent.
+
+func drawnStarburst(size: CGFloat = 17) -> NSImage {
+    // Twelve blunt, round-capped spokes of uneven length around a dense hub.
+    // Weight and lengths were tuned by rendering against Claude.app's own tray
+    // icon at menu bar size; tapered spokes read as a sparkle, and heavier ones
+    // as a snowflake, so this stays deliberately plain.
+    let spokes: [(angle: CGFloat, length: CGFloat)] = [
+        (90, 0.44), (120, 0.36), (150, 0.42), (180, 0.45),
+        (210, 0.35), (240, 0.43), (270, 0.46), (300, 0.36),
+        (330, 0.40), (0, 0.44), (30, 0.37), (60, 0.42),
+    ]
+    let img = NSImage(size: NSSize(width: size, height: size))
+    img.lockFocus()
+    NSColor.black.setStroke()
+    let c = NSPoint(x: size / 2, y: size / 2)
+    for sp in spokes {
+        let r = sp.angle * .pi / 180
+        let path = NSBezierPath()
+        path.lineCapStyle = .round
+        path.lineWidth = size * 0.070
+        path.move(to: NSPoint(x: c.x + cos(r) * size * 0.04, y: c.y + sin(r) * size * 0.04))
+        path.line(to: NSPoint(x: c.x + cos(r) * size * sp.length,
+                              y: c.y + sin(r) * size * sp.length))
+        path.stroke()
+    }
+    img.unlockFocus()
+    img.isTemplate = true
+    return img
+}
+
+// Built once: tick() runs three times a second and must not touch the disk.
+let claudeMark: NSImage = {
+    let base = "/Applications/Claude.app/Contents/Resources"
+    for name in ["TrayIconTemplate@3x.png", "TrayIconTemplate@2x.png", "TrayIconTemplate.png"] {
+        if let img = NSImage(contentsOfFile: "\(base)/\(name)") {
+            img.size = NSSize(width: 17, height: 17)
+            img.isTemplate = true
+            return img
+        }
+    }
+    return drawnStarburst()
+}()
+
 func templateSymbol(_ name: String, size: CGFloat = 13) -> NSImage? {
     let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
         .withSymbolConfiguration(.init(pointSize: size, weight: .regular))
@@ -254,10 +302,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let busy = all.filter { $0.isBusy }
         guard let button = statusItem.button else { return }
 
-        let mark = NSImage(systemSymbolName: "asterisk", accessibilityDescription: "Claude")?
-            .withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
-        mark?.isTemplate = true
-        button.image = mark
+        button.image = claudeMark
         button.imagePosition = .imageLeading
         button.imageHugsTitle = true
         button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
